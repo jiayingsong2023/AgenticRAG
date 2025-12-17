@@ -1,0 +1,19 @@
+[project]
+name = "agenticrag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain",
+    "langchain-community",
+    "langchain-huggingface",
+    "langchain-openai",
+    "langgraph",
+    "faiss-cpu",
+    "python-dotenv",
+    "sentence-transformers",
+    "pypdf",
+    "docx2txt",
+    "jq"
+]

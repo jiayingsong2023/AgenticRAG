@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+faiss_index/
+data/
+error.log
+error_utf8.log
+.python-version
+uv.lock
