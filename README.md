@@ -1,26 +1,28 @@
 # Agentic RAG with LangGraph
 
-This project implements an Agentic RAG (Retrieval-Augmented Generation) system using LangGraph, DeepSeek, and FAISS. It features a "Search-Evaluate-Generate" loop with a self-correcting mechanism.
+This project implements an Agentic RAG (Retrieval-Augmented Generation) system using LangGraph, DeepSeek, and FAISS. It features a "Search-Evaluate-Generate" loop with a self-correcting mechanism and is optimized for AMD GPU acceleration.
 
 ## Features
 
 -   **Agentic Workflow**: Uses LangGraph to orchestrate a stateful retrieval and generation process.
+-   **AMD GPU Acceleration**: Leverages **DirectML** via ONNX Runtime for high-performance embedding generation on AMD hardware (e.g., AI Max+ 395).
 -   **Self-Correction**: Evaluates retrieved documents for relevance. If irrelevant, it rewrites the query and searches again.
--   **Multi-Format Ingestion**: Supports ingestion of PDF, Word (`.docx`), CSV (Email), JSON, and Text (`.txt`) files.
--   **Interactive Mode**: Provides an interactive CLI for chatting with the agent.
--   **Robustness**: Includes a retry limit to prevent infinite loops when no relevant documents are found.
+-   **Multi-Format Ingestion**: Supports ingestion of PDF, Word (`.docx`), CSV, JSON, and Text (`.txt`) files.
+-   **Fast Package Management**: Powered by `uv` for lightning-fast dependency management and execution.
 
 ## Tech Stack
 
 -   **Orchestration**: [LangGraph](https://github.com/langchain-ai/langgraph)
 -   **LLM**: DeepSeek (via `langchain-openai`)
--   **Embeddings**: HuggingFace (`sentence-transformers/all-mpnet-base-v2`)
+-   **Embeddings**: [FastEmbed](https://github.com/qdrant/fastembed) (Model: `BAAI/bge-small-en-v1.5`)
+-   **Inference Engine**: ONNX Runtime with **DirectML**
 -   **Vector Store**: FAISS
--   **Framework**: LangChain
+-   **Package Manager**: [uv](https://github.com/astral-sh/uv)
 
 ## Setup
 
 1.  **Install Dependencies**:
+    Make sure you have `uv` installed. Then run:
     ```bash
     uv sync
     ```
@@ -43,7 +45,7 @@ Run the ingestion script:
 ```bash
 uv run ingest.py
 ```
-Follow the interactive prompts to confirm the directory and proceed with ingestion. This will create/overwrite the `faiss_index`.
+The script will automatically detect your AMD GPU and use it for embedding generation. Follow the interactive prompts to confirm the directory.
 
 ### 2. Run the Agent
 
@@ -52,12 +54,16 @@ Start the interactive agent:
 uv run rag_agent.py
 ```
 Type your question when prompted. The agent will:
-1.  Retrieve documents.
-2.  Grade them.
+1.  Retrieve documents (using GPU-accelerated embeddings).
+2.  Grade them for relevance.
 3.  Rewrite the query if needed (up to 3 times).
-4.  Generate an answer.
+4.  Generate an answer using DeepSeek LLM.
 
 Type `exit` or `quit` to stop.
+
+## Hardware Optimization
+
+This project is specifically optimized for **AMD AI Max+ 395 (Strix Halo)** and other AMD GPUs. It uses `onnxruntime-directml` to ensure that embedding calculations are offloaded to the GPU, significantly reducing CPU load and improving response times.
 
 ## License
 

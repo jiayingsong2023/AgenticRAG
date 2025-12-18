@@ -3,10 +3,19 @@ import glob
 from typing import List
 from dotenv import load_dotenv
 
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# Check for DirectML support
+import onnxruntime as ort
+if "DmlExecutionProvider" in ort.get_available_providers():
+    PROVIDERS = ["DmlExecutionProvider"]
+    print("AMD GPU (DirectML) detected for embeddings.")
+else:
+    PROVIDERS = None
+    print("DirectML not found, using CPU for embeddings.")
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -20,7 +29,6 @@ load_dotenv()
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
 INDEX_PATH = "faiss_index"
-EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 
 def load_documents(data_dir: str) -> List[Document]:
     documents = []
@@ -114,8 +122,11 @@ def ingest():
     documents = text_splitter.split_documents(raw_documents)
     print(f"Split into {len(documents)} chunks.")
 
-    print("Loading embeddings...")
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    print("Loading FastEmbed embeddings...")
+    embeddings = FastEmbedEmbeddings(
+        model_name="BAAI/bge-small-en-v1.5",
+        providers=PROVIDERS
+    )
     
     print("Creating vector store...")
     vectorstore = FAISS.from_documents(documents, embeddings)

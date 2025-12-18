@@ -4,8 +4,17 @@ from typing_extensions import TypedDict
 from dotenv import load_dotenv
 
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_openai import ChatOpenAI
+
+# Check for DirectML support
+import onnxruntime as ort
+if "DmlExecutionProvider" in ort.get_available_providers():
+    PROVIDERS = ["DmlExecutionProvider"]
+    print("AMD GPU (DirectML) detected for embeddings.")
+else:
+    PROVIDERS = None
+    print("DirectML not found, using CPU for embeddings.")
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from langchain_core.output_parsers import StrOutputParser
@@ -16,7 +25,6 @@ from langgraph.graph import END, StateGraph, START
 load_dotenv()
 
 # --- Configuration ---
-EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
 LLM_MODEL = "deepseek-chat"
 LLM_BASE_URL = "https://api.deepseek.com"
 INDEX_PATH = "faiss_index"
@@ -34,8 +42,11 @@ class GraphState(TypedDict):
 # --- Components ---
 
 # 1. Retriever
-print("Loading vector store...")
-embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+print("Loading vector store (FastEmbed)...")
+embeddings = FastEmbedEmbeddings(
+    model_name="BAAI/bge-small-en-v1.5",
+    providers=PROVIDERS
+)
 try:
     vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
     retriever = vectorstore.as_retriever()

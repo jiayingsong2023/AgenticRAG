@@ -15,5 +15,8 @@ dependencies = [
     "sentence-transformers",
     "pypdf",
     "docx2txt",
-    "jq"
+    "jq",
+    "torch-directml>=0.2.5.dev240914",
+    "fastembed>=0.7.4",
+    "onnxruntime-directml>=1.23.0",
 ]
