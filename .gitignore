@@ -8,3 +8,4 @@ error.log
 error_utf8.log
 .python-version
 uv.lock
+librarian_state.json

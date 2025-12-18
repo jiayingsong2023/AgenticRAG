@@ -1,14 +1,17 @@
 # Agentic RAG with LangGraph
 
-This project implements an Agentic RAG (Retrieval-Augmented Generation) system using LangGraph, DeepSeek, and FAISS. It features a "Search-Evaluate-Generate" loop with a self-correcting mechanism and is optimized for AMD GPU acceleration.
+This project implements a multi-role Agentic RAG system using LangGraph, DeepSeek, and FAISS. It features a coordinated "Librarian + Assistant" workflow optimized for AMD GPU acceleration.
 
 ## Features
 
--   **Agentic Workflow**: Uses LangGraph to orchestrate a stateful retrieval and generation process.
+-   **Multi-Role Architecture**:
+    -   **Librarian Agent**: Handles data ingestion, incremental synchronization, and knowledge base maintenance.
+    -   **Knowledge Assistant**: An agentic RAG assistant that handles user queries with self-correction logic.
+-   **Incremental Ingestion**: Uses MD5 hashing to track file changes. Only new or modified files are processed, making daily updates extremely efficient.
 -   **AMD GPU Acceleration**: Leverages **DirectML** via ONNX Runtime for high-performance embedding generation on AMD hardware (e.g., AI Max+ 395).
--   **Self-Correction**: Evaluates retrieved documents for relevance. If irrelevant, it rewrites the query and searches again.
--   **Multi-Format Ingestion**: Supports ingestion of PDF, Word (`.docx`), CSV, JSON, and Text (`.txt`) files.
--   **Fast Package Management**: Powered by `uv` for lightning-fast dependency management and execution.
+-   **Dynamic Knowledge Reloading**: The Assistant automatically detects and reloads the vector store if the Librarian updates it in the background.
+-   **Self-Correction Loop**: Evaluates retrieved documents for relevance and automatically rewrites queries if needed.
+-   **Fast Package Management**: Powered by `uv` for lightning-fast dependency management.
 
 ## Tech Stack
 
@@ -37,29 +40,28 @@ This project implements an Agentic RAG (Retrieval-Augmented Generation) system u
 
 ## Usage
 
-### 1. Ingest Data
+### 🚀 The Unified Entry Point (Recommended)
 
-Place your documents in the `data` directory (or your configured `DATA_DIR`).
-
-Run the ingestion script:
+Start the entire system (Librarian + Assistant) with a single command:
 ```bash
-uv run ingest.py
+uv run python main.py
 ```
-The script will automatically detect your AMD GPU and use it for embedding generation. Follow the interactive prompts to confirm the directory.
+This will:
+1.  Perform an initial knowledge sync.
+2.  Start the **Librarian** in the background (checks for updates every 24 hours).
+3.  Launch the interactive **Knowledge Assistant**.
 
-### 2. Run the Agent
-
-Start the interactive agent:
+### 📚 Manual Ingestion
+If you only want to update the knowledge base without starting the assistant:
 ```bash
-uv run rag_agent.py
+uv run python ingest.py
 ```
-Type your question when prompted. The agent will:
-1.  Retrieve documents (using GPU-accelerated embeddings).
-2.  Grade them for relevance.
-3.  Rewrite the query if needed (up to 3 times).
-4.  Generate an answer using DeepSeek LLM.
 
-Type `exit` or `quit` to stop.
+### 💬 Standalone Assistant
+If you want to run the assistant without the background sync:
+```bash
+uv run python rag_agent.py
+```
 
 ## Hardware Optimization
 

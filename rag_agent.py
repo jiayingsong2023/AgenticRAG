@@ -261,12 +261,27 @@ workflow.add_edge("generate", END)
 # Compile
 app = workflow.compile()
 
-if __name__ == "__main__":
-    print("Agentic RAG System Ready.")
-    print("Type 'exit' or 'quit' to stop.")
+def run_rag_loop():
+    print("（提示：您可以随时向 'data' 文件夹添加新文档，系统会自动同步）")
+    print("输入 'exit' 或 'quit' 可退出程序。")
     
+    # Track the last loaded index time to detect updates
+    last_index_time = 0
+    if os.path.exists(INDEX_PATH):
+        last_index_time = os.path.getmtime(INDEX_PATH)
+
     while True:
-        question = input("\nEnter your question: ").strip()
+        # Check if index was updated by Librarian
+        if os.path.exists(INDEX_PATH):
+            current_index_time = os.path.getmtime(INDEX_PATH)
+            if current_index_time > last_index_time:
+                print("\n[Assistant] New knowledge detected! Reloading vector store...")
+                global vectorstore, retriever
+                vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
+                retriever = vectorstore.as_retriever()
+                last_index_time = current_index_time
+
+        question = input("\n[提问]: ").strip()
         if not question:
             continue
         if question.lower() in ["exit", "quit"]:
@@ -276,11 +291,15 @@ if __name__ == "__main__":
         inputs = {"question": question}
         print("\n--- Processing ---")
         try:
+            value = None
             for output in app.stream(inputs, {"recursion_limit": 50}):
-                for key, value in output.items():
+                for key, val in output.items():
                     print(f"Node '{key}' completed.")
+                    value = val
             
-            # The final state is in 'value' from the last iteration
-            print(f"\nAnswer: {value['generation']}")
+            if value and 'generation' in value:
+                print(f"\nAnswer: {value['generation']}")
+            else:
+                print("\nAnswer: I'm sorry, I couldn't generate an answer.")
         except Exception as e:
             print(f"An error occurred: {e}")
