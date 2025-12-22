@@ -20,6 +20,9 @@ from pydantic import BaseModel, Field
 from langchain_core.output_parsers import StrOutputParser
 
 from langgraph.graph import END, StateGraph, START
+import networkx as nx
+import json
+import difflib
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +31,7 @@ load_dotenv()
 LLM_MODEL = "deepseek-chat"
 LLM_BASE_URL = "https://api.deepseek.com"
 INDEX_PATH = "faiss_index"
+GRAPH_PATH = "graph_index.json"
 
 # --- State ---
 class GraphState(TypedDict):
@@ -37,6 +41,7 @@ class GraphState(TypedDict):
     question: str
     generation: str
     documents: List[str]
+    graph_context: str
     retry_count: int
 
 # --- Components ---
@@ -54,6 +59,20 @@ except Exception as e:
     print(f"Error loading vector store: {e}")
     print("Please run ingest.py first.")
     exit(1)
+
+# 1.1 Graph Store
+print("Loading knowledge graph...")
+graph = nx.Graph()
+if os.path.exists(GRAPH_PATH):
+    try:
+        with open(GRAPH_PATH, 'r') as f:
+            data = json.load(f)
+            graph = nx.node_link_graph(data)
+        print(f"Graph loaded with {graph.number_of_nodes()} nodes.")
+    except Exception as e:
+        print(f"Error loading graph: {e}")
+else:
+    print("Graph index not found. Hybrid retrieval will be limited.")
 
 # 2. LLM
 llm = ChatOpenAI(
@@ -115,6 +134,24 @@ re_write_prompt = ChatPromptTemplate.from_messages(
 
 question_rewriter = re_write_prompt | llm | StrOutputParser()
 
+# 6. Entity Extractor
+class ExtractedEntities(BaseModel):
+    """Extracted entities from a query."""
+    entities: List[str] = Field(description="List of named entities (people, places, concepts, etc.) found in the question")
+
+system_prompt_extractor = """You are an expert at extracting key entities from user questions for knowledge graph lookup. \n
+    Extract all significant entities (names, organizations, locations, specialized concepts). \n
+    Return only the entities as a list."""
+
+extract_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system_prompt_extractor + "\n\n {format_instructions}"),
+        ("human", "Question: {question}"),
+    ]
+).partial(format_instructions=parser.get_format_instructions()) # Reuse JsonOutputParser
+
+entity_extractor = extract_prompt | llm | parser
+
 # --- Nodes ---
 
 def retrieve(state):
@@ -130,12 +167,70 @@ def retrieve(state):
     print("---RETRIEVE---")
     question = state["question"]
 
-    # Retrieval
+    # Vector Retrieval
     documents = retriever.invoke(question)
-    print(f"Retrieved {len(documents)} documents.")
-    for i, doc in enumerate(documents):
-        print(f"Doc {i}: {doc.page_content[:100]}...")
-    return {"documents": documents, "question": question}
+    print(f"Retrieved {len(documents)} vector documents.")
+    
+    # Graph Retrieval (Enhanced Entity Linking)
+    print("---GRAPH RETRIEVAL---")
+    graph_context = ""
+    
+    try:
+        # 1. Extract entities using LLM
+        print("Extracting entities from question...")
+        extraction_result = entity_extractor.invoke({"question": question})
+        extracted_entities = extraction_result.get("entities", [])
+        print(f"Extracted entities: {extracted_entities}")
+
+        # 2. Fuzzy match entities to graph nodes
+        linked_nodes = []
+        graph_nodes = list(graph.nodes)
+        
+        for entity in extracted_entities:
+            # Try exact match first (case-insensitive)
+            matches = [node for node in graph_nodes if str(node).lower() == entity.lower()]
+            if not matches:
+                # Try fuzzy match
+                matches = difflib.get_close_matches(entity, graph_nodes, n=1, cutoff=0.7)
+            
+            if matches:
+                linked_nodes.extend(matches)
+        
+        linked_nodes = list(set(linked_nodes)) # De-duplicate
+
+        if linked_nodes:
+            print(f"Linked to graph nodes: {linked_nodes}")
+            related_info = []
+            
+            # 3. Retrieve neighbors (1-hop)
+            for node in linked_nodes:
+                neighbors = list(graph.neighbors(node))
+                for neighbor in neighbors:
+                    edge_data = graph.get_edge_data(node, neighbor)
+                    relation = edge_data.get('relation', 'related')
+                    related_info.append(f"{node} --({relation})--> {neighbor}")
+            
+            graph_context = "\n".join(related_info)
+            print(f"Retrieved {len(related_info)} graph relations.")
+        else:
+            print("No matching entities linked in graph.")
+            
+    except Exception as e:
+        print(f"Error during graph retrieval: {e}")
+        # Fallback to simple keyword search if LLM extraction fails
+        print("Falling back to simple keyword search...")
+        words = question.replace("?", "").split()
+        found_entities = [node for node in graph.nodes if any(word.lower() in str(node).lower() for word in words if len(word) > 3)]
+        if found_entities:
+            related_info = []
+            for entity in found_entities:
+                neighbors = list(graph.neighbors(entity))
+                for neighbor in neighbors:
+                    edge_data = graph.get_edge_data(entity, neighbor)
+                    related_info.append(f"{entity} --({edge_data.get('relation', 'related')})--> {neighbor}")
+            graph_context = "\n".join(related_info)
+
+    return {"documents": documents, "question": question, "graph_context": graph_context}
 
 def grade_documents(state):
     """
@@ -184,7 +279,11 @@ def generate(state):
     documents = state["documents"]
 
     # RAG generation
-    generation = rag_chain.invoke({"context": documents, "question": question})
+    context = "\n\n".join([d.page_content for d in documents])
+    if state.get("graph_context"):
+        context += "\n\nKnowledge Graph Context:\n" + state["graph_context"]
+        
+    generation = rag_chain.invoke({"context": context, "question": question})
     return {"documents": documents, "question": question, "generation": generation}
 
 def transform_query(state):
@@ -267,19 +366,32 @@ def run_rag_loop():
     
     # Track the last loaded index time to detect updates
     last_index_time = 0
+    last_graph_time = 0
     if os.path.exists(INDEX_PATH):
         last_index_time = os.path.getmtime(INDEX_PATH)
+    if os.path.exists(GRAPH_PATH):
+        last_graph_time = os.path.getmtime(GRAPH_PATH)
 
     while True:
         # Check if index was updated by Librarian
         if os.path.exists(INDEX_PATH):
             current_index_time = os.path.getmtime(INDEX_PATH)
             if current_index_time > last_index_time:
-                print("\n[Assistant] New knowledge detected! Reloading vector store...")
+                print("\n[Assistant] New vector knowledge detected! Reloading vector store...")
                 global vectorstore, retriever
                 vectorstore = FAISS.load_local(INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
                 retriever = vectorstore.as_retriever()
                 last_index_time = current_index_time
+        
+        if os.path.exists(GRAPH_PATH):
+            current_graph_time = os.path.getmtime(GRAPH_PATH)
+            if current_graph_time > last_graph_time:
+                print("\n[Assistant] New graph knowledge detected! Reloading knowledge graph...")
+                global graph
+                with open(GRAPH_PATH, 'r') as f:
+                    data = json.load(f)
+                    graph = nx.node_link_graph(data)
+                last_graph_time = current_graph_time
 
         question = input("\n[提问]: ").strip()
         if not question:

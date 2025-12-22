@@ -17,6 +17,10 @@ from langchain_community.document_loaders import (
     JSONLoader,
     TextLoader,
 )
+import networkx as nx
+from langchain_huggingface import HuggingFacePipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from langchain_experimental.graph_transformers import LLMGraphTransformer
 
 load_dotenv()
 
@@ -43,6 +47,23 @@ class Librarian:
             chunk_size=1000,
             chunk_overlap=200,
         )
+        
+        # Graph setup
+        self.graph_path = "graph_index.json"
+        self.graph = nx.Graph()
+        
+        # Local LLM for Graph Extraction (Qwen 0.5B is very small and fast)
+        print("Librarian: Loading local LLM for graph extraction (Qwen/Qwen2.5-0.5B-Instruct)...")
+        model_id = "Qwen/Qwen2.5-0.5B-Instruct"
+        tokenizer = AutoTokenizer.from_pretrained(model_id)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, 
+            device_map="auto", 
+            trust_remote_code=True
+        )
+        pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=256)
+        self.llm = HuggingFacePipeline(pipeline=pipe)
+        self.graph_transformer = LLMGraphTransformer(llm=self.llm)
 
     def _load_state(self) -> Dict[str, str]:
         if os.path.exists(self.state_path):
@@ -148,8 +169,49 @@ class Librarian:
         # Update state
         self.state = current_files
         self._save_state()
+        
+        # --- Graph Extraction ---
+        print("Librarian: Extracting knowledge graph (this may take a while)...")
+        
+        # Process chunks in batches to avoid OOM and provide progress
+        batch_size = 5
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i + batch_size]
+            print(f"Librarian: Processing graph batch {i//batch_size + 1}/{(len(chunks)-1)//batch_size + 1}...")
+            try:
+                graph_documents = self.graph_transformer.convert_to_graph_documents(batch)
+                
+                for g_doc in graph_documents:
+                    for node in g_doc.nodes:
+                        # Normalize node ID and type
+                        node_id = str(node.id).strip().title()
+                        self.graph.add_node(node_id, type=node.type)
+                    for edge in g_doc.edges:
+                        # Normalize source and target IDs
+                        source_id = str(edge.source.id).strip().title()
+                        target_id = str(edge.target.id).strip().title()
+                        self.graph.add_edge(source_id, target_id, relation=edge.type)
+            except Exception as e:
+                print(f"Librarian: Error in graph extraction batch: {e}")
+        
+        print(f"Librarian: Graph built with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges.")
+        self._save_graph()
+        
         print("Librarian: Sync complete.")
+
+    def _save_graph(self):
+        data = nx.node_link_data(self.graph)
+        with open(self.graph_path, 'w') as f:
+            json.dump(data, f)
+        print(f"Librarian: Graph saved to '{self.graph_path}'.")
+
+    def _load_graph(self):
+        if os.path.exists(self.graph_path):
+            with open(self.graph_path, 'r') as f:
+                data = json.load(f)
+                self.graph = nx.node_link_graph(data)
+            print(f"Librarian: Graph loaded from '{self.graph_path}'.")
 
 if __name__ == "__main__":
     librarian = Librarian()
-    librarian.sync()
+    librarian.sync(force=True)
